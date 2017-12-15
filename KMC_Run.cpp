@@ -19,12 +19,13 @@ using namespace std;
 //Global Constants
 const int MAXLEDGER = 10000000;
 const int MAXGRID = 100;
+const int MAXNEIGHBORS = 12;
 const int X = 0;
 const int Y = 1;
 const int Z = 2;
 
 //Global Variables
-int ledger[10000000][5];				//contains all atoms and their information
+int ledger[MAXLEDGER][5];				//contains all atoms and their information
 										//name of atom is its index in the ledger (this helps with space and is accounted for the the generation and deletion of atoms using the index stack)
 										//ledger[atom#][0] - x coordinate
 										//ledger[atom#][1] - y coordinate
@@ -34,7 +35,7 @@ int ledger[10000000][5];				//contains all atoms and their information
 
 stack<int> ghostatoms;
 
-const int NEIGHBORLIST[12][3] = //Hyrum's order to make neighborfinding more efficient 
+const int NEIGHBORLIST[MAXNEIGHBORS][3] = //Hyrum's order to make neighborfinding more efficient 
 { { 1, 0, 0 },
 { 0, 1, 0 },
 { 1, -1, 0 },
@@ -48,10 +49,10 @@ const int NEIGHBORLIST[12][3] = //Hyrum's order to make neighborfinding more eff
 { 0, -1, 0 },
 { -1, 0, 0 } };
 
-int gridarray[100][100][100];
-int census[12][10000000];
-int censusinterpreter[12];
-double censusrates[12];																				//census sum gone, kaput. //
+int gridarray[MAXGRID][MAXGRID][MAXGRID];
+int census[MAXNEIGHBORS][MAXLEDGER];
+int censusinterpreter[MAXNEIGHBORS];
+double censusrates[MAXNEIGHBORS];																				//census sum gone, kaput. //
 //censusinterpreter[i][0] - # of atoms currently in each neighborhood of the census
 //censusrates[i][1] - rate: (12 - i)*exp((0 - a) * i)
 //censusrates[i][2] - sum: (censusinterpreter[i]*censusrates[i])
@@ -63,18 +64,18 @@ int numatoms = 0;
 
 
 void updateAtomNCount(int atom) {
-	int atomx = ledger[atom][0];
-	int atomy = ledger[atom][1];
-	int atomz = ledger[atom][2];
+	int atomx = ledger[atom][X];
+	int atomy = ledger[atom][Y];
+	int atomz = ledger[atom][Z];
 	int neighborx;
 	int neighbory;
 	int neighborz;
 	int n = 0;
 
-	for (int i = 0; i < 12; i++) {
-		neighborx = atomx + NEIGHBORLIST[i][0];
-		neighbory = atomy + NEIGHBORLIST[i][1];
-		neighborz = atomz + NEIGHBORLIST[i][2];
+	for (int i = 0; i < MAXNEIGHBORS; i++) {
+		neighborx = atomx + NEIGHBORLIST[i][X];
+		neighbory = atomy + NEIGHBORLIST[i][Y];
+		neighborz = atomz + NEIGHBORLIST[i][Z];
 		if (gridarray[neighborx][neighbory][neighborz] > -1) {
 			n++;
 		}
@@ -119,7 +120,7 @@ void generateSphereWithRadius(int r) {
 		const int z = ledger[currentAtom][Z];
 
 		//cycle through each neighboring position of currentAtom
-		for (int i = 0; i < 12; i++) {
+		for (int i = 0; i < MAXNEIGHBORS; i++) {
 
 			//get neighbor atom coordinates
 			const int newX = x + NEIGHBORLIST[i][X];
@@ -144,26 +145,26 @@ void generateSphereWithRadius(int r) {
 
 void initializeArray(bool solidfloor, int startradius, int a) {
 	//Initialize ledger to absolutely blank (-1's)
-	for (int i = 0; i < 10000000; i++) {
+	for (int i = 0; i < MAXLEDGER; i++) {
 		for (int j = 0; j < 5; j++) {
 			ledger[i][j] = -1;
 		}
 	}
 	//Initialize Census to absolutely blank
-	for (int i = 0; i < 12; i++) {
-		for (int j = 0; j < 10000000; j++) {
+	for (int i = 0; i < MAXNEIGHBORS; i++) {
+		for (int j = 0; j < MAXLEDGER; j++) {
 			census[i][j] = -1;
 		}
 	}
 	//Initialize Census Interpreter
-	for (int i = 0; i < 12; i++) {
+	for (int i = 0; i < MAXNEIGHBORS; i++) {
 		censusinterpreter[i] = 0;												//update the censusrates and censusinterpreter to correct format// 
-		censusrates[i] = (12 - i)*exp((0 - a) * i);
+		censusrates[i] = (MAXNEIGHBORS - i)*exp((0 - a) * i);
 		//censusrates[i][2] = 0;
 	}
-	for (int x = 0; x < 100; x++) {
-		for (int y = 0; y < 100; y++) {
-			for (int z = 0; z < 100; z++) {
+	for (int x = 0; x < MAXGRID; x++) {
+		for (int y = 0; y < MAXGRID; y++) {
+			for (int z = 0; z < MAXGRID; z++) {
 				if ((y < 3)) {
 					gridarray[x][y][z] = -3;
 				}
@@ -177,9 +178,6 @@ void initializeArray(bool solidfloor, int startradius, int a) {
 		}
 	}
 	generateSphereWithRadius(startradius);
-	for (int i = 0; i < numatoms; i++) {
-		updateAtomNCount(i);
-	}
 	//Run update n and fill census
 	for (int i = 0; i < numatoms; i++) {
 		updateAtomNCount(i);
@@ -214,8 +212,8 @@ unsigned int pickAtom() {
 
 int selectDirection(int atom, int rand3) {
 	int count = 0;
-	int selector[12];
-	memset(selector, -1, sizeof(int) * 12);
+	int selector[MAXNEIGHBORS];
+	memset(selector, -1, sizeof(int) * MAXNEIGHBORS);
 	for (int i = 4; i < 16; i++) {
 		if (ledger[atom][i] == -1) {
 			selector[count] = i;
@@ -242,10 +240,10 @@ void atomChangeList(int atom, int newlistnum) {
 void updateOldNeighbors(int atom) {
 	int newn = 0;
 	int x_ = 0, y_ = 0, z_ = 0;
-	for (int i = 0; i < 12; i++) {
-		x_ = ledger[atom][0] + NEIGHBORLIST[i][0];
-		y_ = ledger[atom][1] + NEIGHBORLIST[i][1];
-		z_ = ledger[atom][2] + NEIGHBORLIST[i][2];
+	for (int i = 0; i < MAXNEIGHBORS; i++) {
+		x_ = ledger[atom][X] + NEIGHBORLIST[i][X];
+		y_ = ledger[atom][Y] + NEIGHBORLIST[i][Y];
+		z_ = ledger[atom][Z] + NEIGHBORLIST[i][Z];
 		if (gridarray[x_][y_][z_] > -1) {
 			newn = ledger[atom][3] - 1;
 			atomChangeList(gridarray[x_][y_][z_], newn);
@@ -284,9 +282,9 @@ void moveAtom(int atom, int direction) {
 	ledger[atom][Y] = ledger[atom][Y] + newcol;
 	ledger[atom][Z] = ledger[atom][Z] + newlay;
 	int numneighbors = 0;
-	for (int i = 0; i < 12; i++) {
+	for (int i = 0; i < MAXNEIGHBORS; i++) {
 		int x_ = 0, y_ = 0, z_ = 0;
-		x_ = ledger[atom][X] + NEIGHBORLIST[i][Y];
+		x_ = ledger[atom][X] + NEIGHBORLIST[i][X];
 		y_ = ledger[atom][Y] + NEIGHBORLIST[i][Y];
 		z_ = ledger[atom][Z] + NEIGHBORLIST[i][Z];
 		if (gridarray[x_][y_][z_] > -1) {
