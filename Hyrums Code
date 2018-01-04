@@ -1,0 +1,392 @@
+#include<math.h>
+#include<stdio.h>
+#include<string>
+#include<iostream>
+#include<random>
+#include<sstream>
+#include<fstream>
+#include<time.h>
+#include<string.h>
+#include<algorithm>
+
+using namespace std;
+
+const int NUM_ATOMS = 500;
+const float BOND = 4.0;//Bond strength
+const int RADIUS = 5;
+const int NUM_RATES = 13;
+const int ROWS = 100;
+const int COLS = 100;
+const int LAYS = 100;
+const float RATES[] = { 12,
+11 * exp(-BOND),
+10 * exp(-BOND * 2),
+9 * exp(-BOND * 3),
+8 * exp(-BOND * 4),
+7 * exp(-BOND * 5),
+6 * exp(-BOND * 6),
+5 * exp(-BOND * 7),
+4 * exp(-BOND * 8),
+3 * exp(-BOND * 9),
+2 * exp(-BOND * 10),
+exp(-BOND * 11),
+0 };
+
+/*
+all possible movement directions for FCC {row, col, lay}
+To get opposite direction: opp_dir = (11-dir).
+*/
+const int DIR[12][3] = { { 1, 0, 0 },
+{ 0, 1, 0 },
+{ 1, -1, 0 },
+{ 0, 0, 1 },
+{ 1, -1, 1 },
+{ -1, 1, 1 },
+{ 1, -1, -1 },
+{ -1, 1, -1 },
+{ 0, 0, -1 },
+{ -1, 1, 0 },
+{ 0, -1, 0 },
+{ -1, 0, 0 } };
+
+const float PRIM[3][3] = { { 1.0, 0.0, 0.0 },
+{ 0.5, sqrt(3.0) / 2.0, 0.0 },
+{ 0.5, 1.0 / sqrt(12.0), sqrt(2.0 / 3.0) } };
+
+
+
+/*
+domain is the spatial field where the atoms 'physically' dwell
+domain[x][y][z] = -2 represents a boarder space
+domain[x][y][z] = -1 represents an empty space
+domain[x][y][z] = [0 , NUM_ATOMS-1] represents a space occupied by an atom (identified by its number)
+*/
+int domain[ROWS][COLS][LAYS];
+
+int picker[NUM_RATES - 1];
+
+/*
+inverselist is a list of all atoms in numerical order
+information about each atom (row, col, lay, number of neighbors, index in atomlist) is stored in an array
+*/
+int inverselist[NUM_ATOMS][5];
+
+/*
+census stores the size of each row of atomlist
+i.e. census[0] is equivalent to atomlist[0].size()
+*/
+int census[NUM_RATES];
+
+/*
+atomlist separates the atoms into arrays based on the number of neighbors an atom has
+array[0] stores all atoms that have 0 neighbors. etc.
+fully coordinated atoms (12 neighbors) are not stored in atomlist
+*/
+int atomlist[NUM_RATES][NUM_ATOMS];
+
+
+
+float get_PN(){
+	float sum = 0;
+	for (int i = 0; i < NUM_RATES; i++){ sum += census[i] * RATES[i]; }
+	return sum;
+}
+
+int pick_atom(float rand1, int rand2){
+	float partial = 0;
+	for (int i = 0; i < NUM_RATES - 1; i++){
+		partial += census[i] * RATES[i];
+		if (partial > rand1){
+			return atomlist[i][rand2%census[i]];
+		}
+	}
+	fprintf(stderr, "No atom picked\n");
+	return -1;
+}
+
+int count_neighbors(int atom){
+	int count = 0;
+	for (int i = 0; i < NUM_RATES - 1; i++){
+		int neighb = domain[inverselist[atom][0] + DIR[i][0]][inverselist[atom][1] + DIR[i][1]][inverselist[atom][2] + DIR[i][2]];
+		if (neighb > -1){
+			count++;
+		}
+	}
+	return count;
+}
+
+int grab_neighbors(int atom, int * picker){
+	int count = 0;
+	for (int i = 0; i < NUM_RATES - 1; i++){
+		int neighb = domain[inverselist[atom][0] + DIR[i][0]][inverselist[atom][1] + DIR[i][1]][inverselist[atom][2] + DIR[i][2]];
+		if (neighb > -1){
+			picker[count] = i;
+			count++;
+		}
+	}
+	return count;
+}
+
+int grab_directions(int atom, int * picker){
+	//if (inverselist[atom][3] > 11) cout << "Atom #" << atom << " " << inverselist[atom].toString();
+	int count = 0;
+	for (int i = 0; i < NUM_RATES - 1; i++){
+		int neighb = domain[inverselist[atom][0] + DIR[i][0]][inverselist[atom][1] + DIR[i][1]][inverselist[atom][2] + DIR[i][2]];
+		if (neighb == -1){
+			picker[count] = i;
+			count++;
+		}
+	}
+	return count;
+}
+
+int pick_direction(int atom, int rand3){
+	memset(picker, -1, sizeof(int)*(NUM_RATES - 1));
+	int count = grab_directions(atom, picker);
+	if (count == 0) { return -1; }
+	return picker[rand3%count];
+}
+
+void atom_change_list(int atom, int newlistnum){
+	int oldlistnum = inverselist[atom][3];
+	int oldindex = inverselist[atom][4];
+	int swapped_atom = atomlist[oldlistnum][census[oldlistnum] - 1];
+	atomlist[oldlistnum][oldindex] = swapped_atom;
+	inverselist[swapped_atom][4] = oldindex;
+	census[oldlistnum]--;
+	atomlist[newlistnum][census[newlistnum]] = atom;
+	//if newlist == 12, don't store atom!!!
+	inverselist[atom][3] = newlistnum;
+	inverselist[atom][4] = census[newlistnum];
+	census[newlistnum]++;
+}
+
+void old_neighbors(int atom){
+	memset(picker, -1, sizeof(int)*(NUM_RATES - 1));
+	int numneigh = grab_neighbors(atom, picker);
+	int r, c, l, neighbor, listn;
+	for (int i = 0; i < numneigh; i++){
+		r = DIR[picker[i]][0];
+		c = DIR[picker[i]][1];
+		l = DIR[picker[i]][2];
+		neighbor = domain[inverselist[atom][0] + r][inverselist[atom][1] + c][inverselist[atom][2] + l];
+		listn = inverselist[neighbor][3];
+		atom_change_list(neighbor, listn - 1);
+	}
+}
+
+void new_neighbors(int atom){
+	memset(picker, -1, sizeof(int)*(NUM_RATES - 1));
+	int numneigh = grab_neighbors(atom, picker);
+	int r, c, l, neighbor, listn;
+	for (int i = 0; i < numneigh; i++){
+		r = DIR[picker[i]][0];
+		c = DIR[picker[i]][1];
+		l = DIR[picker[i]][2];
+		neighbor = domain[inverselist[atom][0] + r][inverselist[atom][1] + c][inverselist[atom][2] + l];
+		listn = inverselist[neighbor][3];
+		atom_change_list(neighbor, listn + 1);
+	}
+}
+
+void move_atom(int atom, int direction){
+	if (direction == -1) return;
+	old_neighbors(atom);
+	int newrow = DIR[direction][0];
+	int newcol = DIR[direction][1];
+	int newlay = DIR[direction][2];
+	domain[inverselist[atom][0] + newrow][inverselist[atom][1] + newcol][inverselist[atom][2] + newlay] = atom;
+	domain[inverselist[atom][0]][inverselist[atom][1]][inverselist[atom][2]] = -1;
+	inverselist[atom][0] = inverselist[atom][0] + newrow;
+	inverselist[atom][1] = inverselist[atom][1] + newcol;
+	inverselist[atom][2] = inverselist[atom][2] + newlay;
+	int numneighbors = count_neighbors(atom);
+	atom_change_list(atom, numneighbors);
+	new_neighbors(atom);
+}
+
+void export_system(string filename, int currentNumAtoms){
+	ofstream file;
+	file.open(filename);
+	stringstream ss;
+	int count = 0;
+	float x, y, z;
+	float coor[3];
+	for (int atom = 0; atom < currentNumAtoms; atom++){
+		//if (inverselist[atom][3] == 0) continue;
+		count++;
+		x = (float)inverselist[atom][0];
+		y = (float)inverselist[atom][1];
+		z = (float)inverselist[atom][2];
+		coor[0] = (x*PRIM[0][0] + y*PRIM[1][0] + z*PRIM[2][0]);
+		coor[1] = (x*PRIM[0][1] + y*PRIM[1][1] + z*PRIM[2][1]);
+		coor[2] = (x*PRIM[0][2] + y*PRIM[1][2] + z*PRIM[2][2]);
+		ss << "H " << coor[0] << " " << coor[1] << " " << coor[2] << "\n";
+	}
+	file << to_string(count) << "\n\n" << ss.str();
+	file.close();
+}
+
+void init_rand(){
+	//domain = malloc(ROWS*COLS*LAYS*sizeof(int));
+	//mallocDomain();
+	memset(atomlist, -1, sizeof(atomlist[0][0])*(NUM_RATES - 1)*NUM_ATOMS);
+	memset(census, 0, sizeof(census[0])*NUM_RATES);
+	memset(picker, -1, sizeof(picker[0])*(NUM_RATES - 1));
+	random_device randy;
+	mt19937 rn(randy());
+	uniform_int_distribution<int> ur(1, ROWS - 2);
+	for (int i = 0; i < ROWS; i++){
+		for (int j = 0; j < COLS; j++){
+			for (int k = 0; k < LAYS; k++){
+				domain[i][j][k] = (i == 0 || i == ROWS - 1 || j == 0 ||
+					j == COLS - 1 || k == 0 || k == LAYS - 1) ? -2 : -1;
+			}
+		}
+	}
+	int count = 0;
+	int r, c, l;
+	while (count < NUM_ATOMS){
+		r = ur(rn);
+		c = ur(rn);
+		l = ur(rn);
+		if (domain[r][c][l] != -1) continue;
+		domain[r][c][l] = count;
+		inverselist[count][0] = r;// .set_row(r);// = r;
+		inverselist[count][1] = c;// .set_col(c);// = c;
+		inverselist[count][2] = l;// .set_lay(l);// = l;
+		count++;
+	}
+	int number;
+	for (int atom = 0; atom < NUM_ATOMS; atom++){
+		number = count_neighbors(atom);
+		inverselist[atom][3] = number;// .set_listnum(number);// = number;
+		if (number != NUM_RATES - 1){
+			atomlist[number][census[number]] = atom;
+			inverselist[atom][4] = census[number];// .set_index(census[number]);// = census[number];
+			census[number]++;
+		}
+	}
+}
+
+void generateSphere(int atom, int& currentNumAtoms){
+	int r, c, l;
+	int sphereEdge = pow(RADIUS, 2);
+	for (int i = 0; i < NUM_RATES - 1; i++){
+		r = inverselist[atom][0] + DIR[i][0];
+		c = inverselist[atom][1] + DIR[i][1];
+		l = inverselist[atom][2] + DIR[i][2];
+		if (domain[r][c][l] != -1) continue;
+		if (pow(r-inverselist[0][0], 2) + pow(c-inverselist[0][1], 2) + pow(l-inverselist[0][2], 2) <= sphereEdge){
+			inverselist[currentNumAtoms][0] = r;
+			inverselist[currentNumAtoms][1] = c;
+			inverselist[currentNumAtoms][2] = l;
+			domain[r][c][l] = currentNumAtoms;
+			currentNumAtoms++;
+			generateSphere(currentNumAtoms - 1, currentNumAtoms);
+		}
+	}
+}
+
+void init_circ(int& currentNumAtoms){
+	memset(atomlist, -1, sizeof(atomlist[0][0])*(NUM_RATES - 1)*NUM_ATOMS);
+	memset(census, 0, sizeof(census[0])*NUM_RATES);
+	memset(picker, -1, sizeof(picker[0])*(NUM_RATES - 1));
+	for (int i = 0; i < ROWS; i++){
+		for (int j = 0; j < COLS; j++){
+			for (int k = 0; k < LAYS; k++){
+				domain[i][j][k] = (i == 0 || i == ROWS - 1 || j == 0 ||
+					j == COLS - 1 || k == 0 || k == LAYS - 1) ? -2 : -1;
+			}
+		}
+	}
+	int centerRow = (ROWS / 2) - 1;
+	int centerCol = (COLS / 2) - 1;
+	int centerLay = (LAYS / 2) - 1;
+	domain[centerRow][centerCol][centerLay] = 0;
+	inverselist[0][0] = centerRow;
+	inverselist[0][1] = centerCol;
+	inverselist[0][2] = centerLay;
+	currentNumAtoms = 1;
+
+	generateSphere(0, currentNumAtoms);
+
+	int number;
+	for (int atom = 0; atom < currentNumAtoms; atom++){
+		number = count_neighbors(atom);
+		inverselist[atom][3] = number;
+		if (number != NUM_RATES - 1){
+			atomlist[number][census[number]] = atom;
+			inverselist[atom][4] = census[number];
+			census[number]++;
+		}
+	}
+}
+
+string atomToString(int atom){
+	return "Row: " + to_string(inverselist[atom][0]) + "\tCol: " + to_string(inverselist[atom][1]) + "\tLay: " +
+		to_string(inverselist[atom][2]) + "\tList: " + to_string(inverselist[atom][3]) + "\tIndex: " +
+		to_string(inverselist[atom][4]) + "\n";
+}
+
+int* get_atom(int atom){
+	return inverselist[atom];
+}
+
+void printDomain(){
+	for (int i = 0; i < ROWS; i++){
+		for (int j = 0; j < COLS; j++){
+			for (int k = 0; k < LAYS; k++){
+				if (domain[i][j][k] == -1) cout << "  ";
+				else cout << "* ";
+			}
+			cout << "\n";
+		}
+		cout << "\n";
+	}
+}
+
+int main()
+{
+	int currentNumAtoms = 0;
+	init_circ(currentNumAtoms);
+	srand(time(0));
+	random_device rd;
+	mt19937 rng(rd());
+	uniform_real_distribution<double> urd(0.0, 1.0);
+	//uniform_int_distribution<int> uid(0, INT_MAX);
+	clock_t t;
+	t = clock();
+	long double number;
+	float rand1;
+	int numIt = 200000000;
+	unsigned int i;
+	int rand2, rand3, atom, direction;
+
+	for (i = numIt; i != -1; i--){
+		number = urd(rng) * 10000000000;
+		rand1 = (number - (long long)number) * get_PN();
+		rand2 = (long long)number % 100000;
+		rand3 = (long long)number / 1000000;
+		atom = pick_atom(rand1, rand2);
+		if (atom < 0){
+			fprintf(stderr, "No atom picked\n");
+			cout << atom << " " << i << " " << atomToString(atom);
+			continue;
+		}
+		direction = pick_direction(atom, rand3);
+		if (direction < 0) {
+			fprintf(stderr, "No Direction picked\n");
+			cout << atom << " " << i << " " << atomToString(atom);
+			continue;
+		}
+		move_atom(atom, direction);
+		if (i % 50000000 == 0) {
+			cout << i << "\n"; export_system("systemat" + to_string(i) + ".xyz", currentNumAtoms);
+		}
+	}
+	t = clock() - t;
+	printf("Time to iterate %d times: %d\n", i, t);
+	//system("pause");
+	return 0;
+}
